@@ -23,6 +23,7 @@ from launch.conditions import IfCondition
 from launch.conditions import UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
+from launch_ros.actions import LoadComposableNodes
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterFile
 import yaml
@@ -234,7 +235,17 @@ def launch_setup(context, *args, **kwargs):
         )
     )
 
-    # set container to run all required components in the same process
+    # When use_pointcloud_container is true, load nodes into an external container
+    # (the main pointcloud_container) instead of creating a separate process.
+    # This enables zero-copy intra-process communication across the entire
+    # LiDAR pipeline (driver → preprocessors → concat).
+    load_into_external_container = LoadComposableNodes(
+        composable_node_descriptions=nodes,
+        target_container=LaunchConfiguration("pointcloud_container_name"),
+        condition=IfCondition(LaunchConfiguration("use_pointcloud_container")),
+    )
+
+    # Fallback: create a standalone container when no external container is provided
     container = ComposableNodeContainer(
         name=LaunchConfiguration("container_name"),
         namespace="pointcloud_preprocessor",
@@ -242,9 +253,10 @@ def launch_setup(context, *args, **kwargs):
         executable=LaunchConfiguration("container_executable"),
         composable_node_descriptions=nodes,
         output="both",
+        condition=UnlessCondition(LaunchConfiguration("use_pointcloud_container")),
     )
 
-    return [container]
+    return [load_into_external_container, container]
 
 
 def generate_launch_description():
@@ -281,6 +293,8 @@ def generate_launch_description():
     add_launch_arg("use_multithread", "False", "use multithread")
     add_launch_arg("use_intra_process", "False", "use ROS 2 component container communication")
     add_launch_arg("lidar_container_name", "nebula_node_container")
+    add_launch_arg("use_pointcloud_container", "False", "load nodes into external pointcloud_container")
+    add_launch_arg("pointcloud_container_name", "pointcloud_container", "name of the external container to load into")
     add_launch_arg("output_as_sensor_frame", "True", "output final pointcloud in sensor frame")
     add_launch_arg(
         "vehicle_mirror_param_file", description="path to the file of vehicle mirror position yaml"
